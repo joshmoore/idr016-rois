@@ -130,16 +130,21 @@ with open(csv_image, newline='') as csvfile:
             typeinfo['dtype'] = (typeinfo['field'], 'S' + str(typeinfo['max']))
 
     dtype = np.dtype([col['dtype'] for col in coltypes])
-    id = ig.create_dataset("Data", (len(rows),), maxshape=(None,), dtype=dtype,
-                           chunks=(128,), compression='gzip')
+
+    ndata = np.empty([len(rows)], dtype=dtype)
 
     for row in range(len(rows)):
+        items = []
         for col in range(len(reader.fieldnames)):
             field = coltypes[col]['field']
             stype = coltypes[col]['stype']
             if stype == 'i':
-                id[row, field] = int(rows[row][field])
+                items.append(int(rows[row][field]))
             elif stype == 'f':
-                id[row, field] = float(rows[row][field])
+                items.append(float(rows[row][field]))
             else:
-                id[row, field] = rows[row][field].encode('utf-8')
+                items.append(rows[row][field].encode('utf-8'))
+        ndata[row] = tuple(items)
+
+    id = ig.create_dataset("Data", (len(rows),), maxshape=(None,), dtype=dtype,
+                           chunks=(128,), compression='gzip', data=ndata)
