@@ -24,12 +24,9 @@ for p in (idr016_location /
 for o in csv_objects.keys():
     print('  %s: %s' % (o, csv_objects[o]))
 
-f = h5py.File("idr016.h5", "w")
+f = h5py.File("idr016.h5", "w", libver='latest')
 
-ig = f.create_group("Metadata/Image")
-og = f.create_group("Metadata/Objects")
-
-def determine_csv_dtype(files):
+def determine_csv_dtype(files, plate=False):
     fieldnames = None
     coltypes = []
 
@@ -45,6 +42,7 @@ def determine_csv_dtype(files):
                     typeinfo['field'] = colname
                     typeinfo['column'] = col
                     typeinfo['stype'] = None
+                    typeinfo['smax'] = 0
                     typeinfo['min'] = None
                     typeinfo['max'] = None
                     typeinfo['sig-digits'] = 0
@@ -53,9 +51,9 @@ def determine_csv_dtype(files):
                 if fieldnames != reader.fieldnames:
                     raise Exception("Field name mismatch between CSV files")
 
-            is_int = re.compile('^\d+$')
-            is_float = re.compile('^\d+\.\d+$')
-            float_sig_digits = re.compile('^0*\.?0*(\d+)0*\.?0*$')
+            is_int = re.compile('^-?\d+$')
+            is_float = re.compile('^-?\d+\.\d+(e-?\d+)?$')
+            float_sig_digits = re.compile('^-?0*\.?0*(\d+)0*\.?0*(e-?\d+)?$')
 
             for row in reader:
                 for col in range(len(reader.fieldnames)):
@@ -70,6 +68,7 @@ def determine_csv_dtype(files):
                     else:
                         typeinfo['stype'] = 's'
 
+                    ivalue = None
                     if typeinfo['stype'] == 'i':
                         ivalue = int(value)
                     elif typeinfo['stype'] == 'f':
@@ -84,17 +83,19 @@ def determine_csv_dtype(files):
                             else:
                                 typeinfo['sig-digits'] = max(
                                     typeinfo['sig-digits'], sig)
-                    else:
-                        ivalue = len(value.encode('utf-8'))
+                    slen = len(value.encode('utf-8'))
 
-                    if typeinfo['min'] is None:
-                        typeinfo['min'] = ivalue
-                    else:
-                        typeinfo['min'] = min(typeinfo['min'], ivalue)
-                    if typeinfo['max'] is None:
-                        typeinfo['max'] = ivalue
-                    else:
-                        typeinfo['max'] = max(typeinfo['max'], ivalue)
+                    if ivalue is not None:
+                        if typeinfo['min'] is None:
+                            typeinfo['min'] = ivalue
+                        else:
+                            typeinfo['min'] = min(typeinfo['min'], ivalue)
+                        if typeinfo['max'] is None:
+                            typeinfo['max'] = ivalue
+                        else:
+                            typeinfo['max'] = max(typeinfo['max'], ivalue)
+
+                    typeinfo['smax'] = max(typeinfo['smax'], slen)
                 print('.', end='')
 
             for col in range(len(reader.fieldnames)):
@@ -137,16 +138,22 @@ def determine_csv_dtype(files):
                             raise Exception("Float too large: %s, %s sig digits" %
                                         (typeinfo['field'], sig))
                     else:
-                        typeinfo['dtype'] = (typeinfo['field'], 'S' + str(typeinfo['max']))
+                        typeinfo['dtype'] = (typeinfo['field'], 'S' + str(typeinfo['smax']))
                 except Exception as e:
                     raise Exception("Invalid field %s" % (typeinfo['field']))
                 print('+', end='')
 
+
+#    if plate is True:
+#        coltypes.insert(0, { 'dtype' : ('PlateNumber', 'u2') })
+
     print(coltypes)
+
     dtype = np.dtype([col['dtype'] for col in coltypes])
 
     return dtype
 
+# Images
 with open(csv_image, newline='') as csvfile:
     dtype = determine_csv_dtype([csv_image])
 
@@ -160,5 +167,28 @@ with open(csv_image, newline='') as csvfile:
         drow = np.array(tuple(row), dtype=dtype)
         ndata.append(drow)
 
-    id = ig.create_dataset("Data", (len(ndata),), maxshape=(None,), dtype=dtype,
-                           chunks=(128,), data=ndata)
+    id = f.create_dataset("Images", (len(ndata),), maxshape=(None,), dtype=dtype,
+                          chunks=(128,), compression='gzip', data=ndata)
+
+# Objects
+
+dtype = determine_csv_dtype(csv_objects.values(), plate=True)
+print(dtype)
+od = f.create_dataset("Objects", (0,), maxshape=(None,), dtype=dtype,
+                      chunks=(128,), compression='gzip')
+for plate in sorted(csv_objects.keys()):
+    print("PLATE: %s" %(plate))
+    with open(csv_objects[plate], newline='') as csvfile:
+        reader = csv.reader(csvfile)
+        # skip header
+        next(reader, None)
+
+        ndata = []
+
+        for row in reader:
+            drow = np.array(tuple(row), dtype=dtype)
+            ndata.append(drow)
+
+        od.resize((od.shape[0] + len(ndata),))
+
+        od[-len(ndata):] = ndata
