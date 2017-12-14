@@ -24,6 +24,8 @@ for p in (idr016_location /
 for o in csv_objects.keys():
     print('  %s: %s' % (o, csv_objects[o]))
 
+# "latest" version is required to allow large numbers of columns;
+# there's a 64KiB limit for older HDF versions.
 f = h5py.File("idr016.h5", "w", libver='latest')
 
 def determine_csv_dtype(files, plate=False):
