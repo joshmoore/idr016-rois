@@ -21,9 +21,6 @@ for p in (idr016_location /
                          str(p)).group(1)
     csv_objects[plate_id] = p
 
-for o in csv_objects.keys():
-    print('  %s: %s' % (o, csv_objects[o]))
-
 # "latest" version is required to allow large numbers of columns;
 # there's a 64KiB limit for older HDF versions.
 f = h5py.File("idr016.h5", "w", libver='latest')
@@ -32,8 +29,10 @@ def determine_csv_dtype(files, plate=False):
     fieldnames = None
     coltypes = []
 
+    float_sig_digits = re.compile('^-?0*\.?0*(\d+)0*\.?0*(e-?\d+)?$')
+
     for file in files:
-        print('csv: %s' % (file))
+        print('Checking CSV dtypes: %s' % (file))
         with open(file, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
             if fieldnames is None:
@@ -53,28 +52,25 @@ def determine_csv_dtype(files, plate=False):
                 if fieldnames != reader.fieldnames:
                     raise Exception("Field name mismatch between CSV files")
 
-            is_int = re.compile('^-?\d+$')
-            is_float = re.compile('^-?\d+\.\d+(e-?\d+)?$')
-            float_sig_digits = re.compile('^-?0*\.?0*(\d+)0*\.?0*(e-?\d+)?$')
-
             for row in reader:
                 for col in range(len(reader.fieldnames)):
                     typeinfo = coltypes[col]
                     value = row[typeinfo['field']]
-                    if is_float.match(row[typeinfo['field']]):
-                        if typeinfo['stype'] is None:
-                            typeinfo['stype'] = 'f'
-                    elif is_int.match(row[typeinfo['field']]):
-                        if typeinfo['stype'] is None or typeinfo['stype'] == 'f':
-                            typeinfo['stype'] = 'i'
-                    else:
-                        typeinfo['stype'] = 's'
 
-                    ivalue = None
-                    if typeinfo['stype'] == 'i':
-                        ivalue = int(value)
-                    elif typeinfo['stype'] == 'f':
-                        ivalue = float(value)
+                    pv = None
+                    try:
+                        pv = int(value)
+                        if typeinfo['stype'] is None:
+                            typeinfo['stype'] = 'i'
+                    except ValueError:
+                        try:
+                            pv = float(value)
+                            if typeinfo['stype'] is None or typeinfo['stype'] == 'i':
+                                typeinfo['stype'] = 'f'
+                        except ValueError:
+                            typeinfo['stype'] = 's'
+
+                    if typeinfo['stype'] == 'f':
                         sigmatch = float_sig_digits.match(value)
                         if sigmatch:
                             sig = len(sigmatch.group(1))
@@ -85,20 +81,19 @@ def determine_csv_dtype(files, plate=False):
                             else:
                                 typeinfo['sig-digits'] = max(
                                     typeinfo['sig-digits'], sig)
-                    slen = len(value.encode('utf-8'))
 
-                    if ivalue is not None:
+                    if pv is not None:
                         if typeinfo['min'] is None:
-                            typeinfo['min'] = ivalue
+                            typeinfo['min'] = pv
                         else:
-                            typeinfo['min'] = min(typeinfo['min'], ivalue)
+                            typeinfo['min'] = min(typeinfo['min'], pv)
                         if typeinfo['max'] is None:
-                            typeinfo['max'] = ivalue
+                            typeinfo['max'] = pv
                         else:
-                            typeinfo['max'] = max(typeinfo['max'], ivalue)
+                            typeinfo['max'] = max(typeinfo['max'], pv)
 
+                    slen = len(value.encode('utf-8'))
                     typeinfo['smax'] = max(typeinfo['smax'], slen)
-                print('.', end='')
 
             for col in range(len(reader.fieldnames)):
                 try:
@@ -143,11 +138,6 @@ def determine_csv_dtype(files, plate=False):
                         typeinfo['dtype'] = (typeinfo['field'], 'S' + str(typeinfo['smax']))
                 except Exception as e:
                     raise Exception("Invalid field %s" % (typeinfo['field']))
-                print('+', end='')
-
-
-#    if plate is True:
-#        coltypes.insert(0, { 'dtype' : ('PlateNumber', 'u2') })
 
     print(coltypes)
 
@@ -156,6 +146,7 @@ def determine_csv_dtype(files, plate=False):
     return dtype
 
 # Images
+print("Importing image data: %s" %(csv_image))
 with open(csv_image, newline='') as csvfile:
     dtype = determine_csv_dtype([csv_image])
 
@@ -169,8 +160,10 @@ with open(csv_image, newline='') as csvfile:
         drow = np.array(tuple(row), dtype=dtype)
         ndata.append(drow)
 
+    print("Writing feature data")
     id = f.create_dataset("Images", (len(ndata),), maxshape=(None,), dtype=dtype,
                           chunks=(128,), compression='gzip', data=ndata)
+    print("Done")
 
 # Objects
 
@@ -179,7 +172,7 @@ print(dtype)
 od = f.create_dataset("Objects", (0,), maxshape=(None,), dtype=dtype,
                       chunks=(128,), compression='gzip')
 for plate in sorted(csv_objects.keys()):
-    print("PLATE: %s" %(plate))
+    print("Importing object data: %s" %(plate))
     with open(csv_objects[plate], newline='') as csvfile:
         reader = csv.reader(csvfile)
         # skip header
@@ -193,4 +186,6 @@ for plate in sorted(csv_objects.keys()):
 
         od.resize((od.shape[0] + len(ndata),))
 
+        print("Writing feature data")
         od[-len(ndata):] = ndata
+        print("Done")
