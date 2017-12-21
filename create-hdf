@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python2
 
 import csv
 import re
@@ -7,9 +7,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-idr016_location = Path('/data/images/idr/idr016')
-feature_location = Path(
-    '2016-02-01-features/bbbc022-Dataset_S3_image_features')
+idr016_location = Path('/in')
+feature_location = Path('features')
 
 csv_image = idr016_location / feature_location / Path(
     'supplement_Per_Image.csv')
@@ -33,7 +32,7 @@ def determine_csv_dtype(files, plate=False):
 
     for file in files:
         print('Checking CSV dtypes: %s' % (file))
-        with open(file, newline='') as csvfile:
+        with open(str(file)) as csvfile:
             reader = csv.DictReader(csvfile)
             if fieldnames is None:
                 fieldnames = reader.fieldnames
@@ -147,7 +146,7 @@ def determine_csv_dtype(files, plate=False):
 
 # Images
 print("Importing image data: %s" %(csv_image))
-with open(csv_image, newline='') as csvfile:
+with open(str(csv_image)) as csvfile:
     dtype = determine_csv_dtype([csv_image])
 
     reader = csv.reader(csvfile)
